@@ -49,10 +49,23 @@ if st.button("🎬 GERAR DECUPAGEM COM BASE NO HISTÓRICO CAZÉTV"):
     elif not off_text.strip():
         st.warning("⚠️ Insira o texto do OFF antes de gerar a decupagem.")
     else:
-        with st.spinner("Estudando a base histórica de roteiros CazéTV, criando propostas e buscando links no YouTube..."):
+        with st.spinner("Conectando à IA da CazéTV, estudando histórico e gerando partitura de TV..."):
             try:
                 genai.configure(api_key=api_key)
                 
+                # Descobre automaticamente os modelos disponíveis na sua chave
+                modelos_validos = []
+                try:
+                    for m in genai.list_models():
+                        if 'generateContent' in m.supported_generation_methods:
+                            modelos_validos.append(m.name)
+                except Exception as e:
+                    pass
+
+                # Se não conseguir listar, usa os nomes mais recentes como garantia
+                if not modelos_validos:
+                    modelos_validos = ["models/gemini-3.8-flash", "models/gemini-2.5-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
+
                 system_prompt = f"""
                 VOCÊ É O DIRETOR CHEFE DE VTS E DECUPADOR DA CAZÉTV.
                 Sua única função é receber uma locução (OFF) e produzir a DECUPAGEM TÉCNICA OFICIAL DA CAZÉTV.
@@ -70,12 +83,15 @@ if st.button("🎬 GERAR DECUPAGEM COM BASE NO HISTÓRICO CAZÉTV"):
                    | PROPOSTA (IMAGEM / VÍDEO / ÁUDIO) | OFF | LINKS / OBSERVAÇÕES E TIMECODES |
                 3. Na coluna LINKS: Forneça links diretos reais no YouTube com o marcador de segundo exato no player (formato: https://www.youtube.com/watch?v=...&t=XXs), com observações de edição fidedignas (crops, closes, sobe som).
                 """
-                
-                # Lista de modelos modernos suportados em ordem de preferência
-                modelos_disponiveis = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
+
+                prompt_final = f"Decupe este novo OFF espelhando rigorosamente a qualidade e estilo dos exemplos da base de conhecimento:\n\n{off_text}"
+
                 response = None
-                
-                for modelo in modelos_disponiveis:
+                ultimo_erro = ""
+
+                # Tenta executar nos modelos ativos
+                for modelo in modelos_validos:
+                    # 1ª Tentativa: Com busca no Google
                     try:
                         model = genai.GenerativeModel(
                             model_name=modelo,
@@ -83,13 +99,26 @@ if st.button("🎬 GERAR DECUPAGEM COM BASE NO HISTÓRICO CAZÉTV"):
                             system_instruction=system_prompt,
                             tools="google_search_retrieval"
                         )
-                        response = model.generate_content(f"Decupe este novo OFF espelhando rigorosamente a qualidade e estilo dos exemplos da base de conhecimento:\n\n{off_text}")
-                        if response:
+                        response = model.generate_content(prompt_final)
+                        if response and response.text:
                             break
-                    except Exception:
-                        continue
+                    except Exception as err:
+                        ultimo_erro = str(err)
+                        # 2ª Tentativa: Sem a ferramenta externa (caso a cota gratuita bloqueie a busca)
+                        try:
+                            model = genai.GenerativeModel(
+                                model_name=modelo,
+                                generation_config={"temperature": 0.4},
+                                system_instruction=system_prompt
+                            )
+                            response = model.generate_content(prompt_final)
+                            if response and response.text:
+                                break
+                        except Exception as err2:
+                            ultimo_erro = str(err2)
+                            continue
 
-                if response:
+                if response and response.text:
                     st.success("✅ Decupagem concluída com sucesso!")
                     st.markdown("---")
                     st.markdown(response.text)
@@ -101,7 +130,7 @@ if st.button("🎬 GERAR DECUPAGEM COM BASE NO HISTÓRICO CAZÉTV"):
                         mime="text/plain"
                     )
                 else:
-                    st.error("Não foi possível processar com os modelos disponíveis. Verifique sua chave de API.")
+                    st.error(f"Erro detalhado da API do Google: {ultimo_erro}")
                     
             except Exception as e:
-                st.error(f"Erro ao processar: {e}")
+                st.error(f"Erro geral: {e}")
