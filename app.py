@@ -20,7 +20,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header">⚡ CazéTV — Decupador de VT</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">⚡ CAZÉTV — DECUPADOR DE VT</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Cole a locução (OFF) abaixo para gerar a decupagem oficial fundamentada no histórico da CazéTV.</div>', unsafe_allow_html=True)
 
 # Recupera chave da API
@@ -30,7 +30,7 @@ if not api_key:
         st.subheader("⚙️ Configurações")
         api_key = st.text_input("Gemini API Key:", type="password")
 
-# Lê a base de conhecimento real que você colou
+# Lê a base de conhecimento real dos seus documentos
 base_conhecimento = ""
 if os.path.exists("exemplos_cazetv.txt"):
     with open("exemplos_cazetv.txt", "r", encoding="utf-8", errors="ignore") as f:
@@ -71,24 +71,37 @@ if st.button("🎬 GERAR DECUPAGEM COM BASE NO HISTÓRICO CAZÉTV"):
                 3. Na coluna LINKS: Forneça links diretos reais no YouTube com o marcador de segundo exato no player (formato: https://www.youtube.com/watch?v=...&t=XXs), com observações de edição fidedignas (crops, closes, sobe som).
                 """
                 
-                model = genai.GenerativeModel(
-                    model_name="gemini-1.5-pro",
-                    generation_config={"temperature": 0.4},
-                    system_instruction=system_prompt,
-                    tools="google_search_retrieval"
-                )
+                # Lista de modelos modernos suportados em ordem de preferência
+                modelos_disponiveis = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
+                response = None
                 
-                response = model.generate_content(f"Decupe este novo OFF espelhando rigorosamente a qualidade e estilo dos exemplos da base de conhecimento:\n\n{off_text}")
-                
-                st.success("✅ Decupagem concluída com sucesso!")
-                st.markdown("---")
-                st.markdown(response.text)
-                
-                st.download_button(
-                    label="📥 Baixar Decupagem (.txt)",
-                    data=response.text,
-                    file_name="decupagem_cazetv.txt",
-                    mime="text/plain"
-                )
+                for modelo in modelos_disponiveis:
+                    try:
+                        model = genai.GenerativeModel(
+                            model_name=modelo,
+                            generation_config={"temperature": 0.4},
+                            system_instruction=system_prompt,
+                            tools="google_search_retrieval"
+                        )
+                        response = model.generate_content(f"Decupe este novo OFF espelhando rigorosamente a qualidade e estilo dos exemplos da base de conhecimento:\n\n{off_text}")
+                        if response:
+                            break
+                    except Exception:
+                        continue
+
+                if response:
+                    st.success("✅ Decupagem concluída com sucesso!")
+                    st.markdown("---")
+                    st.markdown(response.text)
+                    
+                    st.download_button(
+                        label="📥 Baixar Decupagem (.txt)",
+                        data=response.text,
+                        file_name="decupagem_cazetv.txt",
+                        mime="text/plain"
+                    )
+                else:
+                    st.error("Não foi possível processar com os modelos disponíveis. Verifique sua chave de API.")
+                    
             except Exception as e:
                 st.error(f"Erro ao processar: {e}")
