@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">⚡ CAZÉTV — DECUPADOR DE VT</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Pesquisa audiovisual completa: vídeos oficiais com timecode no YouTube + links de fotos jornalísticas na internet.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Autonomia editorial de IA: curadoria oficial de vídeos com timecode e pesquisa de fotos de imprensa.</div>', unsafe_allow_html=True)
 
 # Chave de API
 api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -47,7 +47,7 @@ if os.path.exists("exemplos_cazetv.txt"):
     with open("exemplos_cazetv.txt", "r", encoding="utf-8", errors="ignore") as f:
         base_conhecimento = f.read()
 
-# Insere hiperlink real e clicável no documento Word/Google Docs
+# Insere hiperlink clicável no Word / Google Docs
 def add_hyperlink(paragraph, url, text, color="E11D48"):
     try:
         part = paragraph.part
@@ -66,14 +66,8 @@ def add_hyperlink(paragraph, url, text, color="E11D48"):
         r.font.color.rgb = RGBColor(225, 29, 72)
         r.font.underline = True
 
-CANAIS_OFICIAIS = [
-    "uefa", "fifa", "barcelona", "barça", "real madrid", "psg", 
-    "paris saint-germain", "ligue 1", "movistar", "espn", "tnt sports",
-    "losc", "marseille", "wec", "fia", "rfeif", "olympic"
-]
-
-# Busca de vídeo com timecode
-def buscar_video_oficial_youtube(termo_busca, timecode_str):
+# Busca de vídeo oficial no YouTube
+def buscar_video_youtube(termo_busca, timecode_str):
     try:
         segundos = 0
         match_tc = re.search(r'(\d{1,2}):(\d{2})', timecode_str)
@@ -82,30 +76,23 @@ def buscar_video_oficial_youtube(termo_busca, timecode_str):
             segs = int(match_tc.group(2))
             segundos = (minutos * 60) + segs
 
-        results = YoutubeSearch(termo_busca, max_results=5).to_dict()
+        results = YoutubeSearch(termo_busca, max_results=3).to_dict()
         if results:
-            video_escolhido = results[0]
-            for v in results:
-                canal = v.get("channel", "").lower()
-                titulo = v.get("title", "").lower()
-                if any(oficial in canal or oficial in titulo for oficial in CANAIS_OFICIAIS):
-                    video_escolhido = v
-                    break
-
-            url = f"https://www.youtube.com{video_escolhido['url_suffix']}"
+            video = results[0]
+            url = f"https://www.youtube.com{video['url_suffix']}"
             if segundos > 0:
                 url += f"&t={segundos}s"
             
-            titulo_limpo = video_escolhido.get('title', termo_busca)
-            if len(titulo_limpo) > 65:
-                titulo_limpo = titulo_limpo[:62] + "..."
-            canal_nome = video_escolhido.get("channel", "Oficial")
+            titulo = video.get('title', termo_busca)
+            if len(titulo) > 65:
+                titulo = titulo[:62] + "..."
+            canal = video.get("channel", "YouTube")
             
             return {
                 "tipo": "video",
-                "titulo": f"▶️ {titulo_limpo} ({canal_nome})",
+                "titulo": f"▶️ {titulo} ({canal})",
                 "url": url,
-                "texto_markdown": f"[▶️ {titulo_limpo} ({canal_nome})]({url})"
+                "texto_markdown": f"[▶️ {titulo} ({canal})]({url})"
             }
     except Exception:
         pass
@@ -116,20 +103,52 @@ def buscar_video_oficial_youtube(termo_busca, timecode_str):
         "texto_markdown": f"**{termo_busca}**"
     }
 
-# Busca de fotos jornalísticas em bancos de imagens e internet
-def gerar_link_busca_foto(termo_busca, arquivo_sugerido):
+# Busca de foto jornalística / Google Imagens
+def gerar_link_foto(termo_busca, arquivo_sugerido):
     query_encoded = urllib.parse.quote(termo_busca)
-    # Link direto para o Google Imagens com filtro editorial/imprensa
     url_foto = f"https://www.google.com/search?tbm=isch&q={query_encoded}"
-    nome_exibicao = arquivo_sugerido if arquivo_sugerido else termo_busca
+    nome = arquivo_sugerido if arquivo_sugerido else termo_busca
     return {
         "tipo": "foto",
-        "titulo": f"📷 FOTO: {nome_exibicao}",
+        "titulo": f"📷 FOTO: {nome}",
         "url": url_foto,
-        "texto_markdown": f"[📷 FOTO: {nome_exibicao}]({url_foto})"
+        "texto_markdown": f"[📷 FOTO: {nome}]({url_foto})"
     }
 
-# Gerador oficial DOCX / Google Docs
+# Extrator blindado que nunca quebra
+def extrair_dados_resposta(texto_bruto):
+    # 1. Tenta extrair JSON delimitado
+    match = re.search(r'(\{[\s\S]*\})', texto_bruto)
+    if match:
+        try:
+            dados = json.loads(match.group(1).strip())
+            if "linhas" in dados and isinstance(dados["linhas"], list):
+                return dados["linhas"]
+        except Exception:
+            pass
+            
+    # 2. Fallback: Se a IA devolveu tabela Markdown direta
+    linhas_tabela = []
+    for linha in texto_bruto.split("\n"):
+        linha = linha.strip()
+        if linha.startswith("|") and not re.search(r'\|\s*:?---', linha):
+            colunas = [c.strip() for c in linha.split("|")[1:-1]]
+            if len(colunas) >= 3:
+                if "PROPOSTA" in colunas[0].upper():
+                    continue
+                tipo = "foto" if "FOTO" in colunas[2].upper() else "video"
+                linhas_tabela.append({
+                    "proposta": colunas[0],
+                    "off": colunas[1],
+                    "tipo": tipo,
+                    "termo_busca": colunas[2],
+                    "arquivo_sugerido": "FOTO_ARQUIVO.jpg",
+                    "timecode": "",
+                    "observacoes": ""
+                })
+    return linhas_tabela
+
+# Gerador DOCX oficial
 def gerar_documento_docx(off_completo, itens_decupados):
     doc = Document()
     
@@ -139,7 +158,6 @@ def gerar_documento_docx(off_completo, itens_decupados):
         section.left_margin = Inches(0.8)
         section.right_margin = Inches(0.8)
 
-    # Cabeçalho
     h1 = doc.add_paragraph()
     r1 = h1.add_run("CAZÉTV — ROTEIRO E DECUPAGEM DE VT")
     r1.font.name = "Arial"
@@ -150,7 +168,6 @@ def gerar_documento_docx(off_completo, itens_decupados):
 
     doc.add_paragraph("─" * 45).alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    # Seção 1: OFF
     h2 = doc.add_paragraph()
     r2 = h2.add_run("1. LOCUÇÃO COMPLETA (OFF)")
     r2.font.name = "Arial"
@@ -166,7 +183,6 @@ def gerar_documento_docx(off_completo, itens_decupados):
 
     doc.add_paragraph()
 
-    # Seção 2: Tabela
     h3 = doc.add_paragraph()
     r3 = h3.add_run("2. TABELA DE DECUPAGEM TÉCNICA")
     r3.font.name = "Arial"
@@ -194,7 +210,7 @@ def gerar_documento_docx(off_completo, itens_decupados):
     for i, item in enumerate(itens_decupados):
         row = tabela.rows[i + 1]
         
-        # Coluna 1: Proposta
+        # Coluna 1
         c0 = row.cells[0]
         c0.width = larguras[0]
         p0 = c0.paragraphs[0]
@@ -203,7 +219,7 @@ def gerar_documento_docx(off_completo, itens_decupados):
             r.font.name = "Arial"
             r.font.size = Pt(9.5)
 
-        # Coluna 2: OFF
+        # Coluna 2
         c1 = row.cells[1]
         c1.width = larguras[1]
         p1 = c1.paragraphs[0]
@@ -212,14 +228,13 @@ def gerar_documento_docx(off_completo, itens_decupados):
             r.font.name = "Arial"
             r.font.size = Pt(9.5)
 
-        # Coluna 3: Links com Hiperlinks Reais Clicáveis
+        # Coluna 3 com Hiperlink Nativo
         c2 = row.cells[2]
         c2.width = larguras[2]
         p2 = c2.paragraphs[0]
         
         info_link = item.get("link_info", {})
         if info_link.get("url"):
-            # Cor vermelha para vídeo (#E11D48), azul para foto (#2563EB)
             cor = "2563EB" if item.get("tipo") == "foto" else "E11D48"
             add_hyperlink(p2, info_link["url"], info_link["titulo"], color=cor)
             
@@ -235,7 +250,6 @@ def gerar_documento_docx(off_completo, itens_decupados):
         else:
             p2.text = f"{item.get('termo_busca', '')} - {item.get('observacoes', '')}"
 
-    # Bordas
     for row in tabela.rows:
         for cell in row.cells:
             tcPr = cell._tc.get_or_add_tcPr()
@@ -264,7 +278,7 @@ if st.button("🎬 GERAR DECUPAGEM COM VÍDEOS E FOTOS"):
     elif not off_text.strip():
         st.warning("⚠️ Insira o texto do OFF antes de gerar a decupagem.")
     else:
-        with st.spinner("Analisando proposta, buscando vídeos oficiais e localizando fotos jornalísticas..."):
+        with st.spinner("Analisando proposta, decidindo entre vídeos e fotos e pesquisando fontes oficiais..."):
             try:
                 genai.configure(api_key=api_key)
                 
@@ -286,45 +300,35 @@ if st.button("🎬 GERAR DECUPAGEM COM VÍDEOS E FOTOS"):
                 Base de Conhecimento CazéTV:
                 {base_conhecimento}
 
-                SUA RESPOSTA DEVE SER ESTRITAMENTE UM JSON VÁLIDO no seguinte formato:
+                SUA RESPOSTA DEVE SER ESTRITAMENTE UM JSON VÁLIDO no seguinte formato (sem introduções ou conversas):
                 {{
                   "linhas": [
                     {{
                       "proposta": "Descrição visual detalhada com planos, slows, letterings estilizados e sobe som de torcida/áudio",
                       "off": "Trecho curto exato correspondente da locução",
                       "tipo": "video" ou "foto",
-                      "termo_busca": "Termos de busca precisos",
-                      "arquivo_sugerido": "Nome do arquivo (ex: FOTO_XANA_BANDEIRA_2015.jpg) - usar quando tipo for foto",
-                      "timecode": "MM:SS - MM:SS (obrigatório para vídeo)",
+                      "termo_busca": "Termos de busca cirúrgicos incluindo a fonte oficial ou contexto",
+                      "arquivo_sugerido": "Nome do arquivo (ex: FOTO_FILIPE_LUIS_MONACO.jpg)",
+                      "timecode": "MM:SS - MM:SS (se for vídeo)",
                       "observacoes": "Instruções de edição, enquadramento ou áudio"
                     }}
                   ]
                 }}
 
-                REGRAS OBRIGATÓRIAS DE CURADORIA:
-                1. QUANDO FOR FOTO (tipo: "foto"):
-                   - Para momentos de fotos históricas, infância, fotos com família, maratonas estáticas, fotos no pódio: classifique como 'foto'.
-                   - termo_busca: Crie uma busca cirúrgica para bancos de imagens e jornais (ex: 'Luis Enrique Xana bandera final Berlin 2015 Barcelona foto', 'Luis Enrique marathon des sables foto').
-                   - arquivo_sugerido: Nome do arquivo interno (ex: FOTO_XANA_BANDEIRA.jpg).
-                   - observacoes: Instruções visuais (ex: 'Efeito Ken Burns, slow zoom-in para dar peso emocional').
-
-                2. QUANDO FOR VÍDEO (tipo: "video"):
-                   - Para lances de jogo, gols, coletivas, títulos erguidos: classifique como 'video'.
-                   - termo_busca: OBRIGATÓRIO incluir o canal oficial: UEFA Champions League, FIFA, FC Barcelona, Real Madrid, PSG TV, Ligue 1 McDonald's, Movistar Plus+, FIA WEC.
-                   - timecode: OBRIGATÓRIO indicar a janela (MM:SS - MM:SS).
+                DIRETRIZES DE DECISÃO DA IA:
+                1. Você tem total autonomia para decidir se cada momento pede VÍDEO ou FOTO:
+                   - Se pedir VÍDEO: inclua no termo_busca o canal oficial mais relevante (ex: canal do clube, liga, emissora detentora) e forneça a janela de timecode (MM:SS - MM:SS).
+                   - Se pedir FOTO: gere uma busca cirúrgica para portais de imprensa/Google Imagens e defina o nome do arquivo interno (arquivo_sugerido).
                 """
 
-                prompt_final = f"Decupe este OFF em JSON estruturado:\n\n{off_text}"
+                prompt_final = f"Decupe este OFF em JSON:\n\n{off_text}"
 
                 response = None
                 for modelo in modelos_validos:
                     try:
                         model = genai.GenerativeModel(
                             model_name=modelo,
-                            generation_config={
-                                "temperature": 0.2,
-                                "response_mime_type": "application/json"
-                            },
+                            generation_config={"temperature": 0.2},
                             system_instruction=system_prompt
                         )
                         response = model.generate_content(prompt_final)
@@ -334,46 +338,47 @@ if st.button("🎬 GERAR DECUPAGEM COM VÍDEOS E FOTOS"):
                         continue
 
                 if response and response.text:
-                    dados_json_brutos = response.text.strip()
-                    dados_json_brutos = re.sub(r'^```(?:json)?\s*|\s*```$', '', dados_json_brutos, flags=re.MULTILINE)
-                    parsed_data = json.loads(dados_json_brutos)
-                    itens_decupados = parsed_data.get("linhas", [])
-
-                    tabela_markdown = "| PROPOSTA (IMAGEM / VÍDEO / ÁUDIO) | OFF | LINKS / OBSERVAÇÕES E TIMECODES |\n| :--- | :--- | :--- |\n"
+                    itens_decupados = extrair_dados_resposta(response.text)
                     
-                    for item in itens_decupados:
-                        tipo = item.get("tipo", "video")
+                    if not itens_decupados:
+                        st.error("A IA não retornou linhas válidas. Tente novamente.")
+                    else:
+                        tabela_markdown = "| PROPOSTA (IMAGEM / VÍDEO / ÁUDIO) | OFF | LINKS / OBSERVAÇÕES E TIMECODES |\n| :--- | :--- | :--- |\n"
                         
-                        if tipo == "foto":
-                            # Busca de imagem jornalística / Google Imagens
-                            termo = item.get("termo_busca") or item.get("arquivo_sugerido") or "foto futebol"
-                            info_link = gerar_link_busca_foto(termo, item.get("arquivo_sugerido", termo))
-                            item["link_info"] = info_link
-                            coluna3 = f"{info_link['texto_markdown']}<br>*(Observação: {item.get('observacoes', '')})*"
-                        else:
-                            # Busca de vídeo oficial no YouTube
-                            info_link = buscar_video_oficial_youtube(item.get("termo_busca", ""), item.get("timecode", ""))
-                            item["link_info"] = info_link
-                            coluna3 = f"{info_link['texto_markdown']}<br>({item.get('timecode', '')}) - {item.get('observacoes', '')}"
-                        
-                        prop = item.get("proposta", "").replace("\n", "<br>")
-                        off_trecho = item.get("off", "").replace("\n", " ")
-                        tabela_markdown += f"| {prop} | {off_trecho} | {coluna3} |\n"
+                        for item in itens_decupados:
+                            tipo = item.get("tipo", "video")
+                            
+                            if tipo == "foto":
+                                termo = item.get("termo_busca") or item.get("arquivo_sugerido") or "foto futebol"
+                                info_link = gerar_link_foto(termo, item.get("arquivo_sugerido", termo))
+                                item["link_info"] = info_link
+                                obs = item.get("observacoes", "")
+                                coluna3 = f"{info_link['texto_markdown']}<br>*(Observação: {obs})*"
+                            else:
+                                info_link = buscar_video_youtube(item.get("termo_busca", ""), item.get("timecode", ""))
+                                item["link_info"] = info_link
+                                tc = item.get("timecode", "")
+                                obs = item.get("observacoes", "")
+                                coluna3 = f"{info_link['texto_markdown']}<br>({tc}) - {obs}"
+                            
+                            prop = item.get("proposta", "").replace("\n", "<br>")
+                            off_trecho = item.get("off", "").replace("\n", " ")
+                            tabela_markdown += f"| {prop} | {off_trecho} | {coluna3} |\n"
 
-                    st.success("✅ Decupagem completa gerada com vídeos oficiais e referências de fotos!")
-                    st.markdown("---")
-                    st.markdown(tabela_markdown, unsafe_allow_html=True)
+                        st.success("✅ Decupagem completa gerada com vídeos oficiais e fotos!")
+                        st.markdown("---")
+                        st.markdown(tabela_markdown, unsafe_allow_html=True)
 
-                    docx_buffer = gerar_documento_docx(off_text, itens_decupados)
+                        docx_buffer = gerar_documento_docx(off_text, itens_decupados)
 
-                    st.download_button(
-                        label="📄 BAIXAR EM FORMATO GOOGLE DOCS / WORD (.DOCX)",
-                        data=docx_buffer,
-                        file_name="decupagem_cazetv.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
+                        st.download_button(
+                            label="📄 BAIXAR EM FORMATO GOOGLE DOCS / WORD (.DOCX)",
+                            data=docx_buffer,
+                            file_name="decupagem_cazetv.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
                 else:
-                    st.error("Não foi possível processar.")
+                    st.error("Não foi possível processar a resposta da IA.")
                     
             except Exception as e:
-                st.error(f"Erro ao processar: {e}")
+                st.error(f"Erro geral: {e}")
